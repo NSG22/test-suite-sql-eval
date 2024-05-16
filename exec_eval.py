@@ -181,7 +181,7 @@ def postprocess(query: str) -> str:
 # 0 if denotationally equivalent
 # 1 otherwise
 # the meaning of each auxillary argument can be seen in the parser definition in evaluation.py
-def eval_exec_match(db: str, p_str: str, g_str: str, plug_value: bool, keep_distinct: bool, progress_bar_for_each_datapoint: bool) -> int:
+async def eval_exec_match(db: str, p_str: str, g_str: str, plug_value: bool, keep_distinct: bool, progress_bar_for_each_datapoint: bool) -> int:
     # post-process the prediction.
     # e.g. removing spaces between ">" and "="
     p_str, g_str = postprocess(p_str), postprocess(g_str)
@@ -221,8 +221,8 @@ def eval_exec_match(db: str, p_str: str, g_str: str, plug_value: bool, keep_dist
             ranger = db_paths
 
         for db_path in ranger:
-            g_flag, g_denotation = asyncio.run(exec_on_db(db_path, g_str))
-            p_flag, p_denotation = asyncio.run(exec_on_db(db_path, pred))
+            g_flag, g_denotation = await exec_on_db(db_path, g_str)
+            p_flag, p_denotation = await exec_on_db(db_path, pred)
 
             # we should expect the gold to be succesfully executed on the database
             assert g_flag != 'exception', 'gold query %s has error on database file %s' % (g_str, db_path)

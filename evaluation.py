@@ -501,7 +501,7 @@ def print_scores(scores, etype, include_turn_acc=True):
             print_formated_s("exact match", exact_scores, '{:<20.3f}')
 
 
-def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinct, progress_bar_for_each_datapoint):
+async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinct, progress_bar_for_each_datapoint):
 
     with open(gold) as f:
         glist = []
@@ -606,7 +606,7 @@ def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinct, pro
                 }
 
             if etype in ["all", "exec"]:
-                exec_score = eval_exec_match(db=db, p_str=p_str, g_str=g_str, plug_value=plug_value,
+                exec_score = await eval_exec_match(db=db, p_str=p_str, g_str=g_str, plug_value=plug_value,
                                              keep_distinct=keep_distinct, progress_bar_for_each_datapoint=progress_bar_for_each_datapoint)
                 if exec_score:
                     scores[hardness]['exec'] += 1
