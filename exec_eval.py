@@ -8,7 +8,7 @@ from itertools import product
 from collections import defaultdict
 import tqdm
 import random
-from parse import get_all_preds_for_execution, remove_distinct
+from test_suite.parse import get_all_preds_for_execution, remove_distinct
 import time
 import pickle as pkl
 import subprocess
@@ -223,6 +223,9 @@ async def eval_exec_match(db: str, p_str: str, g_str: str, plug_value: bool, kee
         for db_path in ranger:
             g_flag, g_denotation = await exec_on_db(db_path, g_str)
             p_flag, p_denotation = await exec_on_db(db_path, pred)
+            
+            if g_flag == "exception" and g_denotation.sqlite_errorcode in (26, 1):
+                continue
 
             # we should expect the gold to be succesfully executed on the database
             assert g_flag != 'exception', 'gold query %s has error on database file %s' % (g_str, db_path)

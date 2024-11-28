@@ -19,10 +19,13 @@
 # }
 ################################
 
+import datetime
 import os
 import json
 import sqlite3
 import argparse
+
+import pandas as pd
 
 from process_sql import get_schema, Schema, get_sql
 from exec_eval import eval_exec_match
@@ -449,7 +452,7 @@ def print_formated_s(row_name, l, element_format):
 
 def print_scores(scores, etype, include_turn_acc=True):
     turns = ['turn 1', 'turn 2', 'turn 3', 'turn 4', 'turn > 4']
-    levels = ['easy', 'medium', 'hard', 'extra', 'all']
+    levels = ['easy', 'medium', 'hard', 'extra', "error", 'all']
     if include_turn_acc:
         levels.append('joint_all')
     partial_types = ['select', 'select(no AGG)', 'where', 'where(no OP)', 'group(no Having)',
@@ -501,7 +504,7 @@ def print_scores(scores, etype, include_turn_acc=True):
             print_formated_s("exact match", exact_scores, '{:<20.3f}')
 
 
-async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinct, progress_bar_for_each_datapoint):
+async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinct, progress_bar_for_each_datapoint, identifier=None, metadata=None):
 
     with open(gold) as f:
         glist = []
@@ -541,13 +544,13 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
 
     evaluator = Evaluator()
     turns = ['turn 1', 'turn 2', 'turn 3', 'turn 4', 'turn > 4']
-    levels = ['easy', 'medium', 'hard', 'extra', 'all', 'joint_all']
+    levels = ['easy', 'medium', 'hard', 'extra', "error", 'all', 'joint_all']
 
     partial_types = ['select', 'select(no AGG)', 'where', 'where(no OP)', 'group(no Having)',
                      'group', 'order', 'and/or', 'IUEN', 'keywords']
     entries = []
+    count = {}
     scores = {}
-
     for turn in turns:
         scores[turn] = {'count': 0, 'exact': 0.}
         scores[turn]['exec'] = 0
@@ -557,22 +560,61 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
         scores[level]['exec'] = 0
         for type_ in partial_types:
             scores[level]['partial'][type_] = {'acc': 0., 'rec': 0., 'f1': 0.,'acc_count':0,'rec_count':0}
+        count[level] = {"exec": 0, "exact": 0}
 
+    
+    parsing_errors = 0
     for i, (p, g) in enumerate(zip(plist, glist)):
+
         if (i + 1) % 10 == 0:
             print('Evaluating %dth prediction' % (i + 1))
         scores['joint_all']['count'] += 1
         turn_scores = {"exec": [], "exact": []}
         for idx, pg in enumerate(zip(p, g)):
+            curr_etype = etype
             p, g = pg
             p_str = p[0]
             p_str = p_str.replace("value", "1")
-            g_str, db = g
+            
+            curr_dict = {}
+            t_count = -1
+            if len(g) == 2:
+                g_str, db = g
+            elif len(g) == 3:
+                g_str, db, nl = g
+                curr_dict['nl'] = nl
+            elif len(g) == 4:
+                g_str, db, nl, t_count = g
+                curr_dict['nl'] = nl
+            else:
+                print("Error in gold:\n", g)
+                continue
+                
+                
             db_name = db
             db = os.path.join(db_dir, db, db + ".sqlite")
             schema = Schema(get_schema(db))
-            g_sql = get_sql(schema, g_str)
-            hardness = evaluator.eval_hardness(g_sql)
+            try:
+                g_sql = get_sql(schema, g_str)
+                hardness = evaluator.eval_hardness(g_sql)
+            except:
+                print("Error in parsing:\n", g_str)
+                parsing_errors += 1
+                hardness = "error"
+                curr_etype = "exec"
+
+            curr_dict['goldSQL'] = g_str
+            
+            #add sloppy sql string if present. has to be added to pred txt after /t  
+            if len(p) > 1:
+                curr_dict['sloppy'] = p[1]
+                
+            curr_dict['predictSQL'] = p_str
+            curr_dict['hardness'] = hardness
+            curr_dict['table_count'] = t_count
+            curr_dict['exec'] = -1
+            
+            
             if idx > 3:
                 idx = "> 4"
             else:
@@ -604,8 +646,9 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                 "union": None,
                 "where": []
                 }
+            
 
-            if etype in ["all", "exec"]:
+            if curr_etype in ["all", "exec"]:
                 exec_score = await eval_exec_match(db=db, p_str=p_str, g_str=g_str, plug_value=plug_value,
                                              keep_distinct=keep_distinct, progress_bar_for_each_datapoint=progress_bar_for_each_datapoint)
                 if exec_score:
@@ -613,10 +656,14 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                     scores[turn_id]['exec'] += 1
                     scores['all']['exec'] += 1
                     turn_scores['exec'].append(1)
+                    count[hardness]["exec"] = count[hardness].get("exec", 0) + 1
+                    count["all"]["exec"] = count["all"].get("exec", 0) + 1
                 else:
                     turn_scores['exec'].append(0)
+                
+                curr_dict["exec"] = exec_score
 
-            if etype in ["all", "match"]:
+            if curr_etype in ["all", "match"]:
                 # rebuild sql for value evaluation
                 kmap = kmaps[db_name]
                 g_valid_col_units = build_valid_col_units(g_sql['from']['table_units'], schema)
@@ -629,14 +676,19 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                 partial_scores = evaluator.partial_scores
                 if exact_score == 0:
                     turn_scores['exact'].append(0)
-                    print("{} pred: {}".format(hardness, p_str))
-                    print("{} gold: {}".format(hardness, g_str))
-                    print("")
+                    # print("{} pred: {}".format(hardness, p_str))
+                    # print("{} gold: {}".format(hardness, g_str))
+                    # print("")
                 else:
                     turn_scores['exact'].append(1)
+                    count[hardness]["exact"] = count[hardness].get("exact", 0) + 1
+                    count["all"]["exact"] = count["all"].get("exact", 0) + 1
                 scores[turn_id]['exact'] += exact_score
                 scores[hardness]['exact'] += exact_score
                 scores['all']['exact'] += exact_score
+                
+                curr_dict["exact"] = exact_score == True or exact_score == 1
+                
                 for type_ in partial_types:
                     if partial_scores[type_]['pred_total'] > 0:
                         scores[hardness]['partial'][type_]['acc'] += partial_scores[type_]['acc']
@@ -645,6 +697,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                         scores[hardness]['partial'][type_]['rec'] += partial_scores[type_]['rec']
                         scores[hardness]['partial'][type_]['rec_count'] += 1
                     scores[hardness]['partial'][type_]['f1'] += partial_scores[type_]['f1']
+                    
                     if partial_scores[type_]['pred_total'] > 0:
                         scores['all']['partial'][type_]['acc'] += partial_scores[type_]['acc']
                         scores['all']['partial'][type_]['acc_count'] += 1
@@ -652,14 +705,16 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                         scores['all']['partial'][type_]['rec'] += partial_scores[type_]['rec']
                         scores['all']['partial'][type_]['rec_count'] += 1
                     scores['all']['partial'][type_]['f1'] += partial_scores[type_]['f1']
+                    
+                    curr_dict[f'{type_}partial_matching_acc'] = partial_scores[type_]['acc']
+                    curr_dict[f'{type_}partial_matching_recall'] = partial_scores[type_]['rec']
+                    curr_dict[f'{type_}partial_matching_f1'] = partial_scores[type_]['f1']
+            
+            else:
+                curr_dict["exact"] = None
 
-                entries.append({
-                    'predictSQL': p_str,
-                    'goldSQL': g_str,
-                    'hardness': hardness,
-                    'exact': exact_score,
-                    'partial': partial_scores
-                })
+            entries.append(curr_dict)
+                
 
         if all(v == 1 for v in turn_scores["exec"]):
             scores['joint_all']['exec'] += 1
@@ -667,6 +722,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
         if all(v == 1 for v in turn_scores["exact"]):
             scores['joint_all']['exact'] += 1
 
+    print("Parsing errors: ", parsing_errors)
     for turn in turns:
         if scores[turn]['count'] == 0:
             continue
@@ -703,6 +759,81 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                         scores[level]['partial'][type_]['rec'] + scores[level]['partial'][type_]['acc'])
 
     print_scores(scores, etype, include_turn_acc=include_turn_acc)
+    generate_excel(entries, count, identifier, metadata)
+    
+    
+def generate_excel(entries: list, level_count: dict, identifier="", metadata=None):
+    sheetname = "evaluation"
+    eval_df = pd.DataFrame(entries)
+    counter_df = eval_df.groupby('hardness').size().reset_index(name='count')
+    counter_df.loc[len(counter_df)] = ['all', len(entries)]
+    level_count_df = pd.DataFrame(level_count)
+    level_count_df = level_count_df.transpose()
+    
+    counter_df = counter_df.merge(level_count_df, left_on='hardness', right_index=True)
+    
+    hardness_sort = {"easy": 0, "medium": 1, "hard": 2, "extra": 3, "error": 4,  "all": 5}
+    
+    eval_df.sort_values(by=[ 'exec', 'exact', 'hardness'], ascending=[True, True, True], inplace=True, key=lambda x: x if x.name!='hardness' else x.map(hardness_sort))
+    counter_df.sort_values(by=["hardness"], ascending=True, key=lambda x: x.map(hardness_sort), inplace=True)
+    
+    try:
+        exec_count = counter_df['exec']["all"]
+        exec_count_str= f"_{exec_count}"
+    except KeyError:
+        exec_count_str = ""
+    
+    if identifier is not None:
+        identifier = f"_{identifier}"
+    else:
+        identifier = ""
+    name = f"eval\\E{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{identifier}{exec_count_str}.xlsx"
+    with pd.ExcelWriter(name, engine='xlsxwriter') as writer:
+        eval_df.to_excel(writer,sheet_name=sheetname, index=False)
+        workbook = writer.book
+        worksheet = writer.sheets[sheetname]
+        # Get the dimensions of the dataframe.
+        (max_row, max_col) = eval_df.shape
+        col_names = eval_df.columns.to_list()
+        exec_index = 6
+        try:
+            exec_index = col_names.index('exec')
+        except ValueError:
+            print("exec not found in columns, took index 4 instead")
+        
+        exact_index = 7
+        try:
+            exact_index = col_names.index('exact')
+        except ValueError:
+            print("exact not found in columns, took index 7 instead")
+            
+        # Add a format. Light red fill with dark red text.
+        format1 = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+
+        # Add a format. Green fill with dark green text.
+        format2 = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+        
+        # Add a format. Green fill with dark orange text.
+        format3 = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C5700"})
+
+        # Apply a conditional format to the required cell range.
+        worksheet.conditional_format(1, exec_index, max_row, max_col, {"type": "cell", "criteria": "==", "value": 1, "format": format2})
+        worksheet.conditional_format(1, exec_index, max_row, max_col, {"type": "cell", "criteria": "==", "value": 0, "format": format1})
+        worksheet.conditional_format(1, exec_index, max_row, max_col, {"type": "cell", "criteria": "==", "value": -1, "format": format3})
+        worksheet.conditional_format(1, exact_index, max_row, exact_index, {"type": "cell", "criteria": "==", "value": "TRUE", "format": format2})
+        worksheet.conditional_format(1, exact_index, max_row, exact_index, {"type": "cell", "criteria": "==", "value": "FALSE", "format": format1})
+        
+        counter_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+2, index=False)
+        
+        try:
+            if metadata is not None:
+                metadata_df = pd.DataFrame(metadata.items(), columns=['key', 'value'])
+                metadata_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+counter_df.shape[0]+4, index=False)
+        except Exception as e:
+            print("Error in writing metadata to excel: ", e)
+    
+    
+    
 
 
 # Rebuild SQL functions for value evaluation
