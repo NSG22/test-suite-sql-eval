@@ -35,6 +35,9 @@ DISABLE_VALUE = True
 # Flag to disable distinct in select evaluation
 DISABLE_DISTINCT = True
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+EVAL_PATH = os.path.join(current_dir, '../eval/')
+
 
 CLAUSE_KEYWORDS = ('select', 'from', 'where', 'group', 'order', 'limit', 'intersect', 'union', 'except')
 JOIN_KEYWORDS = ('join', 'on', 'as')
@@ -787,7 +790,8 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
         identifier = f"_{identifier}"
     else:
         identifier = ""
-    name = f"eval\\E{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{identifier}{exec_count_str}.xlsx"
+        
+    name = os.path.join(EVAL_PATH, f"/E{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{identifier}{exec_count_str}.xlsx")
     with pd.ExcelWriter(name, engine='xlsxwriter') as writer:
         eval_df.to_excel(writer,sheet_name=sheetname, index=False)
         workbook = writer.book
