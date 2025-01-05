@@ -36,7 +36,7 @@ DISABLE_VALUE = True
 DISABLE_DISTINCT = True
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-EVAL_PATH = os.path.join(current_dir, '../eval/')
+EVAL_PATH = os.path.join(current_dir, '../eval')
 
 
 CLAUSE_KEYWORDS = ('select', 'from', 'where', 'group', 'order', 'limit', 'intersect', 'union', 'except')
