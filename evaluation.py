@@ -791,7 +791,8 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
     else:
         identifier = ""
         
-    name = os.path.join(EVAL_PATH, f"/E{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{identifier}{exec_count_str}.xlsx")
+    name = os.path.join(EVAL_PATH, f"E{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{identifier}{exec_count_str}.xlsx")
+    print("Writing to excel: ", name)
     with pd.ExcelWriter(name, engine='xlsxwriter') as writer:
         eval_df.to_excel(writer,sheet_name=sheetname, index=False)
         workbook = writer.book
