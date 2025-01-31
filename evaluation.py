@@ -762,7 +762,8 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                         scores[level]['partial'][type_]['rec'] + scores[level]['partial'][type_]['acc'])
 
     print_scores(scores, etype, include_turn_acc=include_turn_acc)
-    generate_excel(entries, count, identifier, metadata)
+    
+    return entries, count, identifier, metadata
     
     
 def generate_excel(entries: list, level_count: dict, identifier="", metadata=None):
@@ -836,6 +837,88 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
                 metadata_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+counter_df.shape[0]+4, index=False)
         except Exception as e:
             print("Error in writing metadata to excel: ", e)
+            
+            
+            
+def generate_comparison_excel(evaluations: list):
+    """entries: list, level_count: dict, identifier="", metadata=None
+    """
+    sheet_pages = []
+    for eval in evaluations:
+        entries, level_count, identifier, metadata = eval
+        eval_df = pd.DataFrame(entries)
+        counter_df = eval_df.groupby('hardness').size().reset_index(name='count')
+        counter_df.loc[len(counter_df)] = ['all', len(entries)]
+        level_count_df = pd.DataFrame(level_count)
+        level_count_df = level_count_df.transpose()
+        
+        counter_df = counter_df.merge(level_count_df, left_on='hardness', right_index=True)
+        
+        hardness_sort = {"easy": 0, "medium": 1, "hard": 2, "extra": 3, "error": 4,  "all": 5}
+        
+        eval_df.sort_values(by=[ 'exec', 'exact', 'hardness'], ascending=[True, True, True], inplace=True, key=lambda x: x if x.name!='hardness' else x.map(hardness_sort))
+        counter_df.sort_values(by=["hardness"], ascending=True, key=lambda x: x.map(hardness_sort), inplace=True)           
+
+        metadata["identifier"] = identifier
+        
+        sheet_pages.append({"identifier": identifier, "entries": eval_df, "level_count": counter_df, "metadata": metadata})
+        
+    name = os.path.join(EVAL_PATH, f"Comparison_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx")
+    print("Writing to excel: ", name)
+    
+    comparison_col = 0
+    with pd.ExcelWriter(name, engine='xlsxwriter') as writer:
+        for sheet_page in sheet_pages:
+            sheet_page["level_count"].to_excel(writer, sheet_name="Comparison", startcol=comparison_col, index=False)
+                           
+            sheet_page["entries"].to_excel(writer,sheet_name=sheet_page["identifier"], index=False)
+            workbook = writer.book
+            worksheet = writer.sheets[sheet_page["identifier"]]
+            # Get the dimensions of the dataframe.
+            (max_row, max_col) = sheet_page["entries"].shape
+            col_names = sheet_page["entries"].columns.to_list()
+            exec_index = 6
+            try:
+                exec_index = col_names.index('exec')
+            except ValueError:
+                print("exec not found in columns, took index 4 instead")
+            
+            exact_index = 7
+            try:
+                exact_index = col_names.index('exact')
+            except ValueError:
+                print("exact not found in columns, took index 7 instead")
+                
+            # Add a format. Light red fill with dark red text.
+            format1 = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+
+            # Add a format. Green fill with dark green text.
+            format2 = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+            
+            # Add a format. Green fill with dark orange text.
+            format3 = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C5700"})
+
+            # Apply a conditional format to the required cell range.
+            worksheet.conditional_format(1, exec_index, max_row, max_col, {"type": "cell", "criteria": "==", "value": 1, "format": format2})
+            worksheet.conditional_format(1, exec_index, max_row, max_col, {"type": "cell", "criteria": "==", "value": 0, "format": format1})
+            worksheet.conditional_format(1, exec_index, max_row, max_col, {"type": "cell", "criteria": "==", "value": -1, "format": format3})
+            worksheet.conditional_format(1, exact_index, max_row, exact_index, {"type": "cell", "criteria": "==", "value": "TRUE", "format": format2})
+            worksheet.conditional_format(1, exact_index, max_row, exact_index, {"type": "cell", "criteria": "==", "value": "FALSE", "format": format1})
+            
+            sheet_page["level_count"].to_excel(writer, sheet_name=sheet_page["identifier"], startrow=max_row+2, index=False)
+            
+            try:
+                if sheet_page["metadata"] is not None:
+                    metadata_df = pd.DataFrame(sheet_page["metadata"].items(), columns=['key', 'value'])
+                    metadata_df.to_excel(writer, sheet_name=sheet_page["identifier"], startrow=max_row+sheet_page["level_count"].shape[0]+4, index=False)
+                    
+                    metadata_df.to_excel(writer, sheet_name="Comparison", startcol=comparison_col, startrow=sheet_page["level_count"].shape[0]+4, index=False)
+            except Exception as e:
+                print(f"Error in writing metadata to excel {sheet_page['identifier']}: ", e)
+                
+            comparison_col += sheet_page["level_count"].shape[1] + 2
+        
+        
     
     
     
