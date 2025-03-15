@@ -192,6 +192,7 @@ async def exec_on_db_w_to_(sqlite_path: str, query: str, timeout=10) -> Tuple[st
     """Executes sql against db_name in a thread"""
     query = replace_cur_year(query)
     conn = sqlite3.connect(sqlite_path)
+    conn.text_factory = lambda b: b.decode(errors="ignore")
     
     output = None
     with sqlite_timelimit(conn, timeout*1000):
@@ -200,8 +201,16 @@ async def exec_on_db_w_to_(sqlite_path: str, query: str, timeout=10) -> Tuple[st
             cursor.execute(query)
             result = cursor.fetchall()
             output = "result", result
+            
+        except sqlite3.OperationalError as sqlite_error:
+            if sqlite_error.sqlite_errorcode  == 9:
+                output = "exception", "Query execution took too long"
+            else:
+                output = "exception", sqlite_error
+            
         except Exception as e:
             output = "exception", e
+            
         finally:
             cursor.close()
     
