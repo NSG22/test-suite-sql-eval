@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import os
 import re
 import asyncio
@@ -129,11 +130,11 @@ def replace_cur_year(query: str) -> str:
 
 
 # get the database cursor for a sqlite database path
-def get_cursor_from_path(sqlite_path: str):
+def get_cursor_from_path(sqlite_path: str, timeout=15):
     try:
         if not os.path.exists(sqlite_path):
             print("Openning a new connection %s" % sqlite_path)
-        connection = sqlite3.connect(sqlite_path)
+        connection = sqlite3.connect(sqlite_path, timeout=timeout)
     except Exception as e:
         print(sqlite_path)
         raise e
@@ -142,9 +143,9 @@ def get_cursor_from_path(sqlite_path: str):
     return cursor
 
 
-async def exec_on_db_(sqlite_path: str, query: str) -> Tuple[str, Any]:
+async def exec_on_db_(sqlite_path: str, query: str, timeout=15) -> Tuple[str, Any]:
     query = replace_cur_year(query)
-    cursor = get_cursor_from_path(sqlite_path)
+    cursor = get_cursor_from_path(sqlite_path,timeout)
     try:
         cursor.execute(query)
         result = cursor.fetchall()
@@ -155,12 +156,64 @@ async def exec_on_db_(sqlite_path: str, query: str) -> Tuple[str, Any]:
         cursor.close()
         cursor.connection.close()
         return "exception", e
+    
+@contextmanager
+def sqlite_timelimit(conn, ms):
+    """function to limit the time of execution of a sqlite query
+
+    Args:
+        conn (_type_): sqlite database connection
+        ms (_type_): time limit in milliseconds
+
+    Returns:
+        _type_: 
+    """
+    deadline = time.perf_counter() + (ms / 1000)
+    # n is the number of SQLite virtual machine instructions that will be
+    # executed between each check. It takes about 0.08ms to execute 1000.
+    # https://github.com/simonw/datasette/issues/1679
+    n = 1000
+    if ms <= 20:
+        n = 1
+
+    def handler():
+        if time.perf_counter() >= deadline:
+            # Returning 1 terminates the query with an error
+            return 1
+
+    conn.set_progress_handler(handler, n)
+    try:
+        yield
+    finally:
+        conn.set_progress_handler(None, n)
+        
+
+async def exec_on_db_w_to_(sqlite_path: str, query: str, timeout=10) -> Tuple[str, Any]:
+    """Executes sql against db_name in a thread"""
+    query = replace_cur_year(query)
+    conn = sqlite3.connect(sqlite_path)
+    
+    output = None
+    with sqlite_timelimit(conn, timeout*1000):
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query)
+            result = cursor.fetchall()
+            output = "result", result
+        except Exception as e:
+            output = "exception", e
+        finally:
+            cursor.close()
+    
+    conn.close()
+    return output
+
 
 async def exec_on_db(
     sqlite_path: str, query: str, process_id: str = "", timeout: int = TIMEOUT
 ) -> Tuple[str, Any]:
     try:
-        return await asyncio.wait_for(exec_on_db_(sqlite_path, query), timeout)
+        return await asyncio.wait_for(exec_on_db_w_to_(sqlite_path, query, timeout), timeout)
     except asyncio.TimeoutError:
         return ('exception', TimeoutError)
     except Exception as e:
@@ -221,8 +274,8 @@ async def eval_exec_match(db: str, p_str: str, g_str: str, plug_value: bool, kee
             ranger = db_paths
 
         for db_path in ranger:
-            g_flag, g_denotation = await exec_on_db(db_path, g_str)
-            p_flag, p_denotation = await exec_on_db(db_path, pred)
+            g_flag, g_denotation = await exec_on_db(db_path, g_str, timeout=20)
+            p_flag, p_denotation = await exec_on_db(db_path, pred, timeout=20)
             
             if g_flag == "exception" and g_denotation.sqlite_errorcode in (26, 1):
                 continue
