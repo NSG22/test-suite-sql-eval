@@ -115,7 +115,7 @@ def get_schema_from_json(fpath):
 
 def tokenize(string):
     string = str(string)
-    string = string.replace("\'", "\"")  # ensures all string values wrapped by "" problem??
+    string = string.replace("\'", "\"").replace("`", "\"")  # ensures all string values wrapped by "" problem??
     quote_idxs = [idx for idx, char in enumerate(string) if char == '"']
     assert len(quote_idxs) % 2 == 0, "Unexpected quote"
 
@@ -134,8 +134,9 @@ def tokenize(string):
     for i in range(len(toks)):
         if toks[i] in vals:
             toks[i] = vals[toks[i]]
+        
             
-    # combine tableattribute for bird dataset
+    # combine tableattributes for bird dataset
     new_toks = []
     curr_index = 0
     for i in range(len(toks)):
@@ -146,7 +147,9 @@ def tokenize(string):
             new_tok = toks[i]
             name_index = i + 2
             while toks[name_index] != "`":
-                new_tok += toks[name_index] + " "
+                new_tok += toks[name_index]
+                if toks[name_index] != "(" and toks[name_index+1] != ")":
+                    new_tok += " "
                 name_index += 1
             
             curr_index = name_index + 1 # skip the last "`"
@@ -587,6 +590,8 @@ def parse_sql(toks, start_idx, tables_with_alias, schema):
     idx = from_end_idx
     sql['select'] = select_col_units
     # where clause
+    while idx < len_ and toks[idx] not in CLAUSE_KEYWORDS:
+        idx += 1
     idx, where_conds = parse_where(toks, idx, tables_with_alias, schema, default_tables)
     sql['where'] = where_conds
     # group by clause

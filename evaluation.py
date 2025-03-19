@@ -629,7 +629,8 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
 
             try:
                 p_sql = get_sql(schema, p_str)
-            except:
+            except Exception as e:
+                print("Error in parsing:\n", e)
                 # If p_sql is not valid, then we will use an empty sql to evaluate with the correct sql
                 p_sql = {
                 "except": None,
@@ -696,9 +697,17 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                     if partial_scores[type_]['pred_total'] > 0:
                         scores[hardness]['partial'][type_]['acc'] += partial_scores[type_]['acc']
                         scores[hardness]['partial'][type_]['acc_count'] += 1
+                        curr_dict[f'{type_}partial_matching_acc'] = partial_scores[type_]['acc']
+                    else:
+                        curr_dict[f'{type_}partial_matching_acc'] = "N/A"    
+                    
                     if partial_scores[type_]['label_total'] > 0:
                         scores[hardness]['partial'][type_]['rec'] += partial_scores[type_]['rec']
                         scores[hardness]['partial'][type_]['rec_count'] += 1
+                        curr_dict[f'{type_}partial_matching_recall'] = partial_scores[type_]['rec']
+                    else:
+                        curr_dict[f'{type_}partial_matching_recall'] = "N/A"    
+                        
                     scores[hardness]['partial'][type_]['f1'] += partial_scores[type_]['f1']
                     
                     if partial_scores[type_]['pred_total'] > 0:
@@ -709,9 +718,11 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                         scores['all']['partial'][type_]['rec_count'] += 1
                     scores['all']['partial'][type_]['f1'] += partial_scores[type_]['f1']
                     
-                    curr_dict[f'{type_}partial_matching_acc'] = partial_scores[type_]['acc']
-                    curr_dict[f'{type_}partial_matching_recall'] = partial_scores[type_]['rec']
-                    curr_dict[f'{type_}partial_matching_f1'] = partial_scores[type_]['f1']
+                    
+                    if partial_scores[type_]['label_total'] > 0 and partial_scores[type_]['pred_total'] > 0:
+                        curr_dict[f'{type_}partial_matching_f1'] = partial_scores[type_]['f1']
+                    else:
+                        curr_dict[f'{type_}partial_matching_f1'] = "N/A"
             
             else:
                 curr_dict["exact"] = None
@@ -837,6 +848,25 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
                 metadata_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+counter_df.shape[0]+4, index=False)
         except Exception as e:
             print("Error in writing metadata to excel: ", e)
+            
+            
+def generate_graphs(entries: list, level_count: dict, identifier="", metadata=None):
+    """Function that takes the evaluation entries and generates graphs for the evaluation.
+    Graphs that will be generated:
+    - Distribution of hardness levels
+    - Execution accuracy per hardness level
+    - Execution accuracy per table count
+    - Exact match accuracy per hardness level
+    - Exact match accuracy per table count
+    - F1 score for paartial matching
+    
+
+    Args:
+        entries (list): _description_
+        level_count (dict): _description_
+        identifier (str, optional): _description_. Defaults to "".
+        metadata (_type_, optional): _description_. Defaults to None.
+    """
             
             
             
