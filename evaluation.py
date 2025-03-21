@@ -24,6 +24,9 @@ import os
 import json
 import sqlite3
 import argparse
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
 
 import pandas as pd
 
@@ -725,7 +728,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                         curr_dict[f'{type_}partial_matching_f1'] = "N/A"
             
             else:
-                curr_dict["exact"] = None
+                curr_dict["exact"] = -1
 
             entries.append(curr_dict)
                 
@@ -774,7 +777,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
 
     print_scores(scores, etype, include_turn_acc=include_turn_acc)
     
-    return entries, count, identifier, metadata
+    return entries, count, identifier
     
     
 def generate_excel(entries: list, level_count: dict, identifier="", metadata=None):
@@ -848,9 +851,18 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
                 metadata_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+counter_df.shape[0]+4, index=False)
         except Exception as e:
             print("Error in writing metadata to excel: ", e)
+
+def _annotate_sns_barplot(ax):
+    for p in ax.patches:
+        accuracy_value = p.get_height()
+        if accuracy_value > 0:
+            ax.annotate(f'{accuracy_value:.3f}', 
+                        (p.get_x() + p.get_width() / 2., p.get_height()), 
+                        ha='center', va='center',
+                        fontsize=10, color='black',
+                        xytext=(0, 5), textcoords='offset points')
             
-            
-def generate_graphs(entries: list, level_count: dict, identifier="", metadata=None):
+def generate_graphs(entries: list, identifier=""):
     """Function that takes the evaluation entries and generates graphs for the evaluation.
     Graphs that will be generated:
     - Distribution of hardness levels
@@ -867,7 +879,186 @@ def generate_graphs(entries: list, level_count: dict, identifier="", metadata=No
         identifier (str, optional): _description_. Defaults to "".
         metadata (_type_, optional): _description_. Defaults to None.
     """
+    eval_df = pd.DataFrame(entries)
+    eval_df = eval_df[['hardness', 'table_count', 'exec', 'exact']]
+    sns.set(style="whitegrid")
+
+    folder = "graphs" if identifier == "" else f"graphs_{identifier}"
+    output_path = os.path.join(EVAL_PATH, folder)
+    os.makedirs(output_path, exist_ok=True)
+
+    hardness_sort = {"easy": 0, "medium": 1, "hard": 2, "extra": 3, "error": 4,  "all": 5}
+    eval_df.sort_values(by=['hardness'], ascending=[True], inplace=True, key=lambda x: x if x.name!='hardness' else x.map(hardness_sort))
+    
+    #Distribution of Hardness Levels
+    plt.figure(figsize=(8, 5))
+    sns.countplot(x='hardness', data=eval_df, palette='Set2')
+    plt.title("Distribution of Hardness Levels")
+    plt.xlabel("Hardness Level")
+    plt.ylabel("Count")
+    plt.savefig(os.path.join(output_path, "distribution_hardness.png"))
+    plt.close()
+
+    #Execution Accuracy per Hardness Level
+    plt.figure(figsize=(8, 5))
+    ax = sns.barplot(hue='hardness', y='exec', data=eval_df, errorbar=None, palette='Set2', ci=None)
+    _annotate_sns_barplot(ax)
+    plt.title("Execution Accuracy per Hardness Level")
+    plt.xlabel("Hardness Level")
+    plt.ylabel("Execution Accuracy")
+    plt.ylim(0, 1)
+    plt.savefig(os.path.join(output_path, "execution_accuracy_hardness.png"))
+    plt.close()
+
+    #Exact Match Accuracy per Hardness Level
+    eval_df['exact_numeric'] = eval_df['exact'].astype(int)  # Convert boolean to numeric (1=True, 0=False)
+    plt.figure(figsize=(8, 5))
+    ax = sns.barplot(hue='hardness', y='exact_numeric', data=eval_df, errorbar=None, palette='Set2', ci=None)
+    _annotate_sns_barplot(ax)
+    plt.title("Exact Match Accuracy per Hardness Level")
+    plt.xlabel("Hardness Level")
+    plt.ylabel("Exact Match Accuracy")
+    plt.ylim(0, 1)
+    plt.savefig(os.path.join(output_path, "exact_match_accuracy_hardness.png"))
+    plt.close()
+
+    eval_df.sort_values(by=['table_count'], ascending=[True], inplace=True)
+
+    #Execution Accuracy per Table Count
+    plt.figure(figsize=(8, 5))
+    ax = sns.barplot(hue='table_count', y='exec', data=eval_df, errorbar=None, palette='Set2')
+    _annotate_sns_barplot(ax)
+    plt.title("Execution Accuracy per Table Count")
+    plt.xlabel("Table Count")
+    plt.ylabel("Execution Accuracy")
+    plt.ylim(0, 1)
+    plt.savefig(os.path.join(output_path, "execution_accuracy_table_count.png"))
+    plt.close()
+
+    #Exact Match Accuracy per Table Count
+    plt.figure(figsize=(8, 5))
+    ax = sns.barplot(hue='table_count', y='exact_numeric', data=eval_df, errorbar=None, palette='Set2')
+    _annotate_sns_barplot(ax)
+    plt.title("Exact Match Accuracy per Table Count")
+    plt.xlabel("Table Count")
+    plt.ylabel("Exact Match Accuracy")
+    plt.ylim(0, 1)
+    plt.savefig(os.path.join(output_path, "exact_match_accuracy_table_count.png"))
+    plt.close()
+
+    print(f"Plots have been saved in {output_path}")
+
+def generate_comparison_graphs(evaluations: list):
+    """entries: list, level_count: dict, identifier="", metadata=None
+    """
+    combined_data = []
+
+    params_with_plot_potential = ["base","db_schema_format", "prompt_version", "model", "feedback_iterations", "repeat_request", "append_evidence", "predict_tables"]
+    params_dict = {}
+    for param in params_with_plot_potential:
+        params_dict[param] = set()
+    for entries, _, identifier, metadata in evaluations:
+        hardness_dict = {"all": {"exec_count": 0, "exact_count": 0, "total": 0, "total_exec": 0, "total_exact": 0}}
+        for entry in entries:
+            #exec and exact count per hardness level and overall
+            if entry['hardness'] not in hardness_dict:
+                hardness_dict[entry['hardness']] = {"exec_count": 0, "exact_count": 0, "total": 0, "total_exec": 0, "total_exact": 0}
+            hardness_dict[entry['hardness']]["total"] += 1
+
+            if entry['exec'] == 1:
+                hardness_dict['all']["exec_count"] += 1
+                hardness_dict[entry['hardness']]["exec_count"] += 1
+            if entry['exact'] == 1:
+                hardness_dict['all']["exact_count"] += 1
+                hardness_dict[entry['hardness']]["exact_count"] += 1
             
+            hardness_dict["all"]["total_exec"] += 1
+            hardness_dict[entry['hardness']]["total_exec"] += 1
+
+            if int(entry['exact']) == 1 or int(entry['exact']) == 0:
+                hardness_dict["all"]["total_exact"] += 1
+                hardness_dict[entry['hardness']]['total_exact'] += 1
+
+        for key, value in hardness_dict.items():
+            exec_acc = value["exec_count"] / value["total_exec"] if value["total_exec"] > 0 else np.nan
+            exact_acc = value["exact_count"] / value["total_exact"] if value["total_exact"] > 0 else np.nan
+            combined_data.append({"hardness": key, "exec": exec_acc, "exact": exact_acc,
+                                  "identifier": identifier,
+                                  **metadata})
+
+        for key in metadata.keys():
+            if key in params_with_plot_potential:
+                params_dict[key].add(metadata[key])
+
+    # Convert combined data to a DataFrame
+    params_to_plot = []
+    identifier_str = ""
+    for param in params_with_plot_potential:
+        if len(params_dict[param]) > 1:
+            params_to_plot.append(param)
+            identifier_str += f"{param}_"
+
+    #remove last underscore
+    if identifier_str != "":
+        identifier_str = identifier_str[:-1]
+
+    for entry in combined_data:
+        plot_identifier = ""
+        for param in params_to_plot:
+            plot_identifier += f"{entry[param]}_"
+        entry['plot_identifier'] = plot_identifier
+
+    folder = f"graphs_{identifier_str}"
+    output_path = os.path.join(EVAL_PATH, folder)
+    os.makedirs(output_path, exist_ok=True)
+
+    df = pd.DataFrame(combined_data)    
+    hardness_sort = {"easy": 0, "medium": 1, "hard": 2, "extra": 3, "error": 4,  "all": 5}
+    df.sort_values(by=['hardness'], ascending=[True], inplace=True, key=lambda x: x if x.name!='hardness' else x.map(hardness_sort))
+    
+
+    plt.figure(figsize=(10, 5))
+    ax = sns.barplot(data=df, x="plot_identifier", y="exec", hue="hardness", palette="Set2", ci=None)
+    _annotate_sns_barplot(ax)
+    plt.title("Execution Accuracy per Identifier")
+    plt.ylim(0, 1)
+    plt.ylabel("Execution Accuracy")
+    plt.xlabel("Identifier")
+    plt.legend(title="Hardness Level")
+    plt.savefig(os.path.join(output_path, "execution_accuracy_per_identifier.png"))
+    plt.close()
+
+    df_long = df.melt(id_vars=["plot_identifier", "hardness"], value_vars=["exec", "exact"], var_name="metric", value_name="accuracy")
+
+    plt.figure(figsize=(12, 6))
+
+    print(df_long[df_long["hardness"] == "all"])
+
+    # Plot bars for both exec and exact together
+    ax = sns.barplot(data=df_long[df_long["hardness"] == "all"], x="plot_identifier", y="accuracy", hue="metric", dodge=True, palette="Set2", ci=None)
+    _annotate_sns_barplot(ax)
+    plt.title("Execution and Exact Accuracy per Identifier and Hardness Level")
+    plt.ylim(0, 1)
+    plt.ylabel("Accuracy")
+    plt.xlabel("Identifier")
+    plt.legend(title="Metric", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_path, "exec_and_exact_accuracy_per_identifier.png"))
+    plt.close()
+    # def plot_overall_execution_accuracy(df, metric: str = "exec"):
+    #     plt.figure(figsize=(10, 5))
+    #     sns.barplot(data=df, x="plot_identifier", y=metric, hue="hardness", palette="Set2")
+    #     title = "Execution Accuracy per Identifier" if metric == "exec" else "Exact Match Accuracy per Identifier"
+    #     plt.title(title)
+    #     plt.ylim(0, 1)
+    #     plt.ylabel("Execution Accuracy" if metric == "exec" else "Exact Match Accuracy")
+    #     plt.xlabel("Identifier")
+    #     plt.legend(title="Hardness Level")
+    #     plt.savefig(os.path.join(output_path, "exact_match_accuracy_table_count.png"))
+    #     plt.close()
+
+    # for param in params_to_plot:
+    #     plot_overall_execution_accuracy(df, param)
             
             
 def generate_comparison_excel(evaluations: list):
