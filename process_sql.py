@@ -39,6 +39,10 @@ TABLE_TYPE = {
     'table_unit': "table_unit",
 }
 
+JOIN_START_OPS = ('inner', 'left', 'right', 'full', 'cross', 'natural', 'join')
+
+KEYWORDS_AFTER_ALIAS = ('on', 'as','inner', 'left', 'right', 'full', 'cross', 'natural', 'join')
+
 COND_OPS = ('and', 'or')
 SQL_OPS = ('intersect', 'union', 'except')
 ORDER_OPS = ('desc', 'asc')
@@ -133,34 +137,40 @@ def tokenize(string):
     # replace with string value token
     for i in range(len(toks)):
         if toks[i] in vals:
-            toks[i] = vals[toks[i]]
+            toks[i] = vals[toks[i]]#.replace("\"", "").lower()#TODO
         
-            
+        #replace column names with their values
+        elif "." in toks[i]:
+            tmp = toks[i].split(".")
+            if tmp[1] in vals:
+                normalizes_val = vals[tmp[1]].replace("\"", "").lower()
+                toks[i] = tmp[0] + "." + normalizes_val
+           
     # combine tableattributes for bird dataset
-    new_toks = []
-    curr_index = 0
-    for i in range(len(toks)):
-        if i < curr_index:
-            continue
+    # new_toks = []
+    # curr_index = 0
+    # for i in range(len(toks)):
+    #     if i < curr_index:
+    #         continue
         
-        if "." in toks[i] and toks[i].split(".")[1] == "" and i+1 < len(toks) and toks[i+1] == "`":
-            new_tok = toks[i]
-            name_index = i + 2
-            while toks[name_index] != "`":
-                new_tok += toks[name_index]
-                if toks[name_index] != "(" and toks[name_index+1] != ")":
-                    new_tok += " "
-                name_index += 1
+    #     if "." in toks[i] and toks[i].split(".")[1] == "" and i+1 < len(toks) and toks[i+1] == "`":
+    #         new_tok = toks[i]
+    #         name_index = i + 2
+    #         while toks[name_index] != "`":
+    #             new_tok += toks[name_index]
+    #             if toks[name_index] != "(" and toks[name_index+1] != ")":
+    #                 new_tok += " "
+    #             name_index += 1
             
-            curr_index = name_index + 1 # skip the last "`"
-            new_tok = new_tok.rstrip()
-            new_toks.append(new_tok)
-            continue
+    #         curr_index = name_index + 1 # skip the last "`"
+    #         new_tok = new_tok.rstrip()
+    #         new_toks.append(new_tok)
+    #         continue
         
-        new_toks.append(toks[i])
-        curr_index += 1
+    #     new_toks.append(toks[i])
+    #     curr_index += 1
         
-    toks = new_toks
+    #toks = new_toks
     
     # find if there exists !=, >=, <=
     eq_idxs = [idx for idx, tok in enumerate(toks) if tok == "="]
@@ -183,8 +193,21 @@ def scan_alias(toks):
     return alias
 
 
+def scan_alias_v2(toks):
+    from_join_idx = [idx for idx, tok in enumerate(toks) if tok in ['from', 'join']]
+    alias = {}
+    for idx in from_join_idx:
+        if idx+2 < len(toks) and toks[idx+2] == 'as':
+            alias[toks[idx+3]] = toks[idx+1]
+        
+        elif idx+2 < len(toks) and toks[idx+2] not in KEYWORDS_AFTER_ALIAS:
+            alias[toks[idx+2]] = toks[idx+1]
+    
+    return alias
+
+
 def get_tables_with_alias(schema, toks):
-    tables = scan_alias(toks)
+    tables = scan_alias_v2(toks)
     for key in schema:
         assert key not in tables, "Alias {} has the same name in table".format(key)
         tables[key] = key
@@ -263,7 +286,7 @@ def parse_col_unit(toks, start_idx, tables_with_alias, schema, default_tables=No
         idx, col_id = strftime_tok_helper(toks, idx, tables_with_alias, schema, default_tables)
         return idx, (AGG_OPS.index("none"), col_id, isDistinct)
     
-    if toks[idx] == "iif":
+    if toks[idx] == "iif":#Todo: Implement this correctly
         idx += 1
         assert toks[idx] == '('
         idx += 1
@@ -278,6 +301,29 @@ def parse_col_unit(toks, start_idx, tables_with_alias, schema, default_tables=No
         idx += 1
         
         return idx, (AGG_OPS.index("none"), col_id, isDistinct)
+    
+    if toks[idx] == "cast": #Todo: Implement this correctly
+        idx += 1
+        assert toks[idx] == '('
+        idx += 1
+        tmp_idx = idx
+        opening_count = 1
+        while opening_count > 0:
+            if toks[tmp_idx] == "(":
+                opening_count += 1
+            elif toks[tmp_idx] == ")":
+                opening_count -= 1
+            elif toks[tmp_idx] == "as":
+                idx = tmp_idx
+                break
+            tmp_idx += 1
+        
+        if toks[tmp_idx] == "as":
+            idx += 2
+            assert toks[idx] == ')'
+            idx += 1
+            return idx, (AGG_OPS.index("none"), None, False)
+        assert False, "Error cast: {}".format(toks[idx])
         
     agg_id = AGG_OPS.index("none")
     idx, col_id = parse_col(toks, idx, tables_with_alias, schema, default_tables)
@@ -380,7 +426,6 @@ def parse_condition(toks, start_idx, tables_with_alias, schema, default_tables=N
                 idx += 1
                 not_op = True
                     
-
             assert idx < len_ and toks[idx] in WHERE_OPS, "Error condition: idx: {}, tok: {}".format(idx, toks[idx])
             op_id = WHERE_OPS.index(toks[idx])
             idx += 1
@@ -392,11 +437,25 @@ def parse_condition(toks, start_idx, tables_with_alias, schema, default_tables=N
                 idx += 1
                 idx, val2 = parse_value(toks, idx, tables_with_alias, schema, default_tables)
             else:  # normal case: single value
+                block = False
                 if op_id == WHERE_OPS.index('is'):
                     if toks[idx] == 'not':
                         idx += 1
-                idx, val1 = parse_value(toks, idx, tables_with_alias, schema, default_tables)
-                val2 = None
+
+                if toks[idx] == '(' and toks[idx+1] == 'select':
+                    idx, sql = parse_sql(toks, idx, tables_with_alias, schema)
+                    val1 = sql
+                
+                else:
+                    if toks[idx] == '(':
+                        idx += 1
+                        block = True
+                    idx, val1 = parse_value(toks, idx, tables_with_alias, schema, default_tables)
+                    val2 = None
+
+                if block:
+                    assert toks[idx] == ')'
+                    idx += 1
 
             conds.append((not_op, op_id, val_unit, val1, val2))
 
@@ -436,6 +495,15 @@ def parse_select(toks, start_idx, tables_with_alias, schema, default_tables=None
             idx += 1  # skip ','
 
     return idx, (isDistinct, val_units)
+
+
+def check_subquery(toks, idx):
+    """
+    Check if the token is start of a subquery
+    """
+    if idx + 1 < len(toks) and toks[idx] == '(' and toks[idx+1] == 'select':
+        return True
+    return False
 
 
 def parse_from(toks, start_idx, tables_with_alias, schema):

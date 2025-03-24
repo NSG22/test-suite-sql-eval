@@ -1032,8 +1032,6 @@ def generate_comparison_graphs(evaluations: list):
 
     plt.figure(figsize=(12, 6))
 
-    print(df_long[df_long["hardness"] == "all"])
-
     # Plot bars for both exec and exact together
     ax = sns.barplot(data=df_long[df_long["hardness"] == "all"], x="plot_identifier", y="accuracy", hue="metric", dodge=True, palette="Set2", ci=None)
     _annotate_sns_barplot(ax)
@@ -1059,7 +1057,42 @@ def generate_comparison_graphs(evaluations: list):
 
     # for param in params_to_plot:
     #     plot_overall_execution_accuracy(df, param)
+    print(generate_latex_table(df_long))
             
+
+def generate_latex_table(df):
+    """
+    Generates LaTeX code for a table displaying execution (exec) and exact match (exact) accuracy.
+    
+    Parameters:
+        df_long (pd.DataFrame): DataFrame with columns ["identifier", "hardness", "metric", "accuracy"].
+    
+    Returns:
+        str: LaTeX table code as a string.
+    """
+
+    df_filtered = df[df["hardness"] == "all"]
+    df_pivot = df_filtered.pivot(index="plot_identifier", columns="metric", values="accuracy")
+    df_pivot = df_pivot.round(3)
+
+    latex_code = r"\begin{table}[h]" "\n"
+    latex_code += r"\centering" "\n"
+    latex_code += r"\begin{tabular}{|c|c|c|}" "\n"
+    latex_code += r"\hline" "\n"
+    latex_code += r"Identifier & Exec Accuracy & Exact Accuracy \\" "\n"
+    latex_code += r"\hline" "\n"
+
+    for identifier, row in df_pivot.iterrows():
+        escaped_identifier = identifier.replace("_", r"\_")
+        latex_code += f"{escaped_identifier} & {row.get('exec', 0):.3f} & {row.get('exact', 0):.3f} \\\\ \n"
+
+    latex_code += r"\hline" "\n"
+    latex_code += r"\end{tabular}" "\n"
+    latex_code += r"\caption{Execution and Exact Accuracy per Identifier}" "\n"
+    latex_code += r"\label{tab:accuracy}" "\n"
+    latex_code += r"\end{table}" "\n"
+
+    return latex_code
             
 def generate_comparison_excel(evaluations: list):
     """entries: list, level_count: dict, identifier="", metadata=None
