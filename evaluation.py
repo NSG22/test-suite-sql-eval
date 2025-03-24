@@ -24,11 +24,13 @@ import os
 import json
 import sqlite3
 import argparse
+import time
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
 import pandas as pd
+import tqdm
 
 from process_sql import get_schema, Schema, get_sql
 from exec_eval import eval_exec_match
@@ -570,7 +572,8 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
 
     
     parsing_errors = 0
-    for i, (p, g) in enumerate(zip(plist, glist)):
+    pred_errors = 0
+    for i, (p, g) in tqdm(enumerate(zip(plist, glist)), total=len(plist), desc="Evaluating Queries", ncols=100):
 
         if (i + 1) % 10 == 0:
             print('Evaluating %dth prediction' % (i + 1))
@@ -604,7 +607,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
                 g_sql = get_sql(schema, g_str)
                 hardness = evaluator.eval_hardness(g_sql)
             except:
-                print("Error in parsing:\n", g_str)
+                #print("Error in parsing:\n", g_str)
                 parsing_errors += 1
                 hardness = "error"
                 curr_etype = "exec"
@@ -633,7 +636,8 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
             try:
                 p_sql = get_sql(schema, p_str)
             except Exception as e:
-                print("Error in parsing:\n", e)
+                pred_errors +=1
+                #print("Error in parsing:\n", e)
                 # If p_sql is not valid, then we will use an empty sql to evaluate with the correct sql
                 p_sql = {
                 "except": None,
@@ -740,6 +744,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
             scores['joint_all']['exact'] += 1
 
     print("Parsing errors: ", parsing_errors)
+    print("Predicted tokenization errors", pred_errors)
     for turn in turns:
         if scores[turn]['count'] == 0:
             continue
@@ -794,7 +799,7 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
     
     eval_df.sort_values(by=[ 'exec', 'exact', 'hardness'], ascending=[True, True, True], inplace=True, key=lambda x: x if x.name!='hardness' else x.map(hardness_sort))
     counter_df.sort_values(by=["hardness"], ascending=True, key=lambda x: x.map(hardness_sort), inplace=True)
-    
+    print(counter_df)
     try:
         exec_count = counter_df['exec']["all"]
         exec_count_str= f"_{exec_count}"
@@ -845,12 +850,18 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
         
         counter_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+2, index=False)
         
+        
         try:
             if metadata is not None:
                 metadata_df = pd.DataFrame(metadata.items(), columns=['key', 'value'])
                 metadata_df.to_excel(writer, sheet_name=sheetname, startrow=max_row+counter_df.shape[0]+4, index=False)
         except Exception as e:
             print("Error in writing metadata to excel: ", e)
+        
+        
+    latex_txt_path = os.path.join(EVAL_PATH, f"{identifier}.txt")
+    with open(latex_txt_path, "w") as f:
+            f.write(generate_single_latex_table(counter_df))
 
 def _annotate_sns_barplot(ax):
     for p in ax.patches:
@@ -953,7 +964,7 @@ def generate_comparison_graphs(evaluations: list):
     """
     combined_data = []
 
-    params_with_plot_potential = ["base","db_schema_format", "prompt_version", "model", "feedback_iterations", "repeat_request", "append_evidence", "predict_tables"]
+    params_with_plot_potential = ["base","db_schema_format", "prompt_version", "model", "feedback_iterations", "repeat_request", "append_evidence", "predict_tables", "num_examples","query_representation"]
     params_dict = {}
     for param in params_with_plot_potential:
         params_dict[param] = set()
@@ -1006,6 +1017,8 @@ def generate_comparison_graphs(evaluations: list):
         plot_identifier = ""
         for param in params_to_plot:
             plot_identifier += f"{entry[param]}_"
+        if plot_identifier != "":
+            plot_identifier = plot_identifier[:-1]
         entry['plot_identifier'] = plot_identifier
 
     folder = f"graphs_{identifier_str}"
@@ -1057,8 +1070,52 @@ def generate_comparison_graphs(evaluations: list):
 
     # for param in params_to_plot:
     #     plot_overall_execution_accuracy(df, param)
-    print(generate_latex_table(df_long))
-            
+    
+    timestamp = str(time.time()).split(".")[0]
+    latex_txt_path = os.path.join(output_path, f"{identifier_str}{timestamp}.txt")
+    with open(latex_txt_path, "w") as f:
+            f.write(generate_latex_table(df_long))
+
+
+def generate_single_latex_table(df):
+    """gets a dataframe contatining the distrubution of hardness levels and the accuracy on exec and exact match.
+    Based on that it generates a latex table with total number of examples, exec and exact accuracy per hardness level in percentage.
+    
+    Example dataframe:
+    hardness  count  exec  exact
+    1   medium      3     1      0
+    0     hard      2     0      0
+    2      all      5     1      0
+    Args:
+        df (_type_): _description_
+    """
+    df = df.copy()
+
+    latex_code = r"\begin{table}[h]" "\n"
+    latex_code += r"\centering" "\n"
+    latex_code += r"\begin{tabular}{lccc}" "\n"
+    latex_code += r"\hline" "\n"
+    latex_code += r"Hardness & Total Examples & Exec Accuracy (\%) & Exact Accuracy (\%) \\" "\n"
+    latex_code += r"\hline" "\n"
+
+    for _, row in df.iterrows():
+        hardness = row['hardness']
+        count = int(row['count'])
+        exec_acc = row["exec"] * 100 / row["count"] if not pd.isna(row['exec']) else "N/A"
+        exact_acc = row["exact"] * 100 / row["count"] if not pd.isna(row['exact']) else "N/A"
+        
+        rounded_exec_acc = f"{exec_acc:.1f}" if exec_acc != "N/A" else "N/A"
+        rounded_exact_acc = f"{exact_acc:.1f}" if exact_acc != "N/A" else "N/A"
+        
+        latex_code += f"{hardness} & {count} & {rounded_exec_acc}\% & {rounded_exact_acc}\% \\\\ \n"
+
+    latex_code += r"\hline" "\n"
+    latex_code += r"\end{tabular}" "\n"
+    latex_code += r"\caption{Evaluation Results by Hardness Level}" "\n"
+    latex_code += r"\label{tab:hardness_eval}" "\n"
+    latex_code += r"\end{table}" "\n"
+
+    return latex_code
 
 def generate_latex_table(df):
     """
@@ -1084,7 +1141,9 @@ def generate_latex_table(df):
 
     for identifier, row in df_pivot.iterrows():
         escaped_identifier = identifier.replace("_", r"\_")
-        latex_code += f"{escaped_identifier} & {row.get('exec', 0):.3f} & {row.get('exact', 0):.3f} \\\\ \n"
+        exec_percent = row.get("exec") * 100
+        exact_percent = row.get("exact") * 100
+        latex_code += f"{escaped_identifier} & {exec_percent:.1f}\% & {exact_percent:.1f}\% \\\\ \n"
 
     latex_code += r"\hline" "\n"
     latex_code += r"\end{tabular}" "\n"

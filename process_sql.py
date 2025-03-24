@@ -466,7 +466,7 @@ def parse_condition(toks, start_idx, tables_with_alias, schema, default_tables=N
                 conds.append(toks[idx])
                 idx += 1  # skip and/or
         except:
-            print("Error condition: idx: {}, tok: {}".format(idx, toks[idx]))
+            #print("Error condition: idx: {}, tok: {}".format(idx, toks[idx]))
             break
 
     return idx, conds
