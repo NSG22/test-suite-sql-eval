@@ -30,7 +30,7 @@ import numpy as np
 import seaborn as sns
 
 import pandas as pd
-import tqdm
+from tqdm import tqdm
 
 from process_sql import get_schema, Schema, get_sql
 from exec_eval import eval_exec_match
@@ -573,7 +573,7 @@ async def evaluate(gold, predict, db_dir, etype, kmaps, plug_value, keep_distinc
     
     parsing_errors = 0
     pred_errors = 0
-    for i, (p, g) in tqdm(enumerate(zip(plist, glist)), total=len(plist), desc="Evaluating Queries", ncols=100):
+    for i, (p, g) in enumerate(zip(plist, glist)):
 
         if (i + 1) % 10 == 0:
             print('Evaluating %dth prediction' % (i + 1))
@@ -809,7 +809,7 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
     if identifier is not None:
         identifier = f"_{identifier}"
     else:
-        identifier = ""
+        identifier = "NI"
         
     name = os.path.join(EVAL_PATH, f"E{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{identifier}{exec_count_str}.xlsx")
     print("Writing to excel: ", name)
@@ -862,6 +862,8 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
     latex_txt_path = os.path.join(EVAL_PATH, f"{identifier}.txt")
     with open(latex_txt_path, "w") as f:
             f.write(generate_single_latex_table(counter_df))
+            if metadata is not None:
+                f.write(metadata)
 
 def _annotate_sns_barplot(ax):
     for p in ax.patches:

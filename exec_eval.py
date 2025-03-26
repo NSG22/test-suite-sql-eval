@@ -222,11 +222,11 @@ async def exec_on_db(
     sqlite_path: str, query: str, process_id: str = "", timeout: int = TIMEOUT
 ) -> Tuple[str, Any]:
     try:
-        return await asyncio.wait_for(exec_on_db_w_to_(sqlite_path, query, timeout), timeout)
+        return await asyncio.wait_for(exec_on_db_w_to_(sqlite_path, query, timeout),None)
     except asyncio.TimeoutError:
-        return ('exception', TimeoutError)
+        return 'exception', TimeoutError
     except Exception as e:
-        return ("exception", e)
+        return "exception", e
 
 
 # postprocess the model predictions to avoid execution errors
@@ -286,7 +286,10 @@ async def eval_exec_match(db: str, p_str: str, g_str: str, plug_value: bool, kee
             g_flag, g_denotation = await exec_on_db(db_path, g_str, timeout=20)
             p_flag, p_denotation = await exec_on_db(db_path, pred, timeout=20)
             
-            if g_flag == "exception" and g_denotation.sqlite_errorcode in (26, 1):
+            if g_flag == "exception":
+                if isinstance(g_denotation, sqlite3.Error) and g_denotation.sqlite_errorcode in (26, 1):
+                    continue
+                print(f"An Error occured while executing query: {g_denotation}")
                 continue
 
             # we should expect the gold to be succesfully executed on the database
