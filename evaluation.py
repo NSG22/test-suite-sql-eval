@@ -66,6 +66,22 @@ HARDNESS = {
 }
 
 
+PLOT_IDENTIFIER_DICT = {
+    "DBSchemaType.DAILSQL":"DAILSQL",
+    "DBSchemaType.JSON":"JSON",
+    "DBSchemaType.CSV":"CSV",
+    "DBSchemaType.SQLITE":"SQLITE",
+    "PromptVersion.STANDARD": "ZeroS",
+    "PromptVersion.CoT": "CoT",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": "LLama-3.1",
+    "sloppy\_sql\_llama\_3\_1\_8B\_train":"LLama-3.1-SBIRDE",
+    "sloppy\_sql\_llama\_3\_1\_8B\_train\_woe":"LLama-3.1-SBIRD",
+    "gpt-4o-mini-2024-07-18":"4o-mini",
+    "birdGPT4o\_question\_final\_wo\_evidence\_question":"SBIRD",
+    "birdGPT4o\_with\_ev\_question":"SBIRDE"
+}
+
+
 def condition_has_or(conds):
     return 'or' in conds[1::2]
 
@@ -966,10 +982,12 @@ def generate_comparison_graphs(evaluations: list):
     """
     combined_data = []
 
-    params_with_plot_potential = ["base","db_schema_format", "prompt_version", "model", "feedback_iterations", "repeat_request", "append_evidence", "predict_tables", "num_examples","query_representation"]
+    params_with_plot_potential = ["provide_quality_fb","base","db_schema_format", "prompt_version", "model", "feedback_iterations", "repeat_request", "append_evidence", "predict_tables", "num_examples","query_representation"]
     params_dict = {}
     for param in params_with_plot_potential:
         params_dict[param] = set()
+    
+    combined_metadata = {}
     for entries, _, identifier, metadata in evaluations:
         hardness_dict = {"all": {"exec_count": 0, "exact_count": 0, "total": 0, "total_exec": 0, "total_exact": 0}}
         for entry in entries:
@@ -999,9 +1017,13 @@ def generate_comparison_graphs(evaluations: list):
                                   "identifier": identifier,
                                   **metadata})
 
-        for key in metadata.keys():
+        for key,value in metadata.items():
             if key in params_with_plot_potential:
                 params_dict[key].add(metadata[key])
+            
+            curr_metadata = combined_metadata.get(key, [])
+            curr_metadata.append(value)
+            combined_metadata[key] = curr_metadata
 
     # Convert combined data to a DataFrame
     params_to_plot = []
@@ -1021,7 +1043,17 @@ def generate_comparison_graphs(evaluations: list):
             plot_identifier += f"{entry[param]}_"
         if plot_identifier != "":
             plot_identifier = plot_identifier[:-1]
-        entry['plot_identifier'] = plot_identifier
+        
+        plot_identifier_short = PLOT_IDENTIFIER_DICT.get(plot_identifier, plot_identifier)
+        entry['plot_identifier'] = plot_identifier_short
+
+    meta_data_str = ""
+
+    for key, value in combined_metadata.items():
+        val_str = ""
+        for elem in value:
+            val_str += str(elem)
+        meta_data_str += f"{key}: {val_str}\n"
 
     folder = f"graphs_{identifier_str}"
     output_path = os.path.join(EVAL_PATH, folder)
@@ -1076,7 +1108,8 @@ def generate_comparison_graphs(evaluations: list):
     timestamp = str(time.time()).split(".")[0]
     latex_txt_path = os.path.join(output_path, f"{identifier_str}{timestamp}.txt")
     with open(latex_txt_path, "w") as f:
-            f.write(generate_latex_table(df_long))
+            table = generate_latex_table(df_long)
+            f.write(f"{table}\n{meta_data_str}")
 
 
 def generate_single_latex_table(df):
