@@ -977,7 +977,7 @@ def generate_graphs(entries: list, identifier=""):
 
     print(f"Plots have been saved in {output_path}")
 
-def generate_comparison_graphs(evaluations: list):
+def generate_comparison_graphs(evaluations: list, with_exact_match=True):
     """entries: list, level_count: dict, identifier="", metadata=None
     """
     combined_data = []
@@ -1108,7 +1108,7 @@ def generate_comparison_graphs(evaluations: list):
     timestamp = str(time.time()).split(".")[0]
     latex_txt_path = os.path.join(output_path, f"{identifier_str}{timestamp}.txt")
     with open(latex_txt_path, "w") as f:
-            table = generate_latex_table(df_long)
+            table = generate_latex_table(df_long, with_exact_match)
             f.write(f"{table}\n{meta_data_str}")
 
 
@@ -1152,7 +1152,7 @@ def generate_single_latex_table(df):
 
     return latex_code
 
-def generate_latex_table(df):
+def generate_latex_table(df, with_exact_match=True):
     """
     Generates LaTeX code for a table displaying execution (exec) and exact match (exact) accuracy.
     
@@ -1167,24 +1167,44 @@ def generate_latex_table(df):
     df_pivot = df_filtered.pivot(index="plot_identifier", columns="metric", values="accuracy")
     df_pivot = df_pivot.round(3)
 
-    latex_code = r"\begin{table}[h]" "\n"
-    latex_code += r"\centering" "\n"
-    latex_code += r"\begin{tabular}{|c|c|c|}" "\n"
-    latex_code += r"\hline" "\n"
-    latex_code += r"Identifier & Exec Accuracy & Exact Accuracy \\" "\n"
-    latex_code += r"\hline" "\n"
+    if with_exact_match:
+        latex_code = r"\begin{table}[h]" "\n"
+        latex_code += r"\centering" "\n"
+        latex_code += r"\begin{tabular}{|c|c|c|}" "\n"
+        latex_code += r"\hline" "\n"
+        latex_code += r"Identifier & Exec Accuracy & Exact Accuracy \\" "\n"
+        latex_code += r"\hline" "\n"
 
-    for identifier, row in df_pivot.iterrows():
-        escaped_identifier = identifier.replace("_", r"\_")
-        exec_percent = row.get("exec") * 100
-        exact_percent = row.get("exact") * 100
-        latex_code += f"{escaped_identifier} & {exec_percent:.1f}\% & {exact_percent:.1f}\% \\\\ \n"
+        for identifier, row in df_pivot.iterrows():
+            escaped_identifier = identifier.replace("_", r"\_")
+            exec_percent = row.get("exec") * 100
+            exact_percent = row.get("exact") * 100
+            latex_code += f"{escaped_identifier} & {exec_percent:.1f}\% & {exact_percent:.1f}\% \\\\ \n"
 
-    latex_code += r"\hline" "\n"
-    latex_code += r"\end{tabular}" "\n"
-    latex_code += r"\caption{Execution and Exact Accuracy per Identifier}" "\n"
-    latex_code += r"\label{tab:accuracy}" "\n"
-    latex_code += r"\end{table}" "\n"
+        latex_code += r"\hline" "\n"
+        latex_code += r"\end{tabular}" "\n"
+        latex_code += r"\caption{Execution and Exact Accuracy per Identifier}" "\n"
+        latex_code += r"\label{tab:accuracy}" "\n"
+        latex_code += r"\end{table}" "\n"
+        
+    else:
+        latex_code = r"\begin{table}[h]" "\n"
+        latex_code += r"\centering" "\n"
+        latex_code += r"\begin{tabular}{|c|c|}" "\n"
+        latex_code += r"\hline" "\n"
+        latex_code += r"Identifier & Exec Accuracy \\" "\n"
+        latex_code += r"\hline" "\n"
+
+        for identifier, row in df_pivot.iterrows():
+            escaped_identifier = identifier.replace("_", r"\_")
+            exec_percent = row.get("exec") * 100
+            latex_code += f"{escaped_identifier} & {exec_percent:.1f}\% \\\\ \n"
+
+        latex_code += r"\hline" "\n"
+        latex_code += r"\end{tabular}" "\n"
+        latex_code += r"\caption{Execution Accuracy per Identifier}" "\n"
+        latex_code += r"\label{tab:accuracy}" "\n"
+        latex_code += r"\end{table}" "\n"
 
     return latex_code
             
