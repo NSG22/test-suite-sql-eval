@@ -30,7 +30,6 @@ import numpy as np
 import seaborn as sns
 
 import pandas as pd
-from tqdm import tqdm
 
 from process_sql import get_schema, Schema, get_sql
 from exec_eval import eval_exec_match
@@ -879,7 +878,7 @@ def generate_excel(entries: list, level_count: dict, identifier="", metadata=Non
     with open(latex_txt_path, "w") as f:
             f.write(generate_single_latex_table(counter_df))
             if metadata is not None:
-                f.write(metadata)
+                f.write(str(metadata))
 
 def _annotate_sns_barplot(ax):
     for p in ax.patches:
